@@ -28,6 +28,17 @@
         "https://app.devin.ai/*"
       ],
       "js": [
+        "page-bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://deepwiki.com/*",
+        "https://app.devin.ai/*"
+      ],
+      "js": [
         "content.js"
       ],
       "run_at": "document_idle"

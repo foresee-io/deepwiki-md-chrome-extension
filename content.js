@@ -123,6 +123,12 @@
           let markdownTitle = title.replace(/\s+/g, '-');
 
           if (contentContainer) {
+            /* The visible DOM contains only Mermaid's rendered SVG. DeepWiki's exact
+            source survives as a React `__reactProps$...` expando in the page's
+            JavaScript runtime, which this isolated content script cannot access.
+            Ask the narrowly scoped MAIN-world bridge to copy it onto the shared DOM
+            before walking the document. See page-bridge.js for the boundary rationale. */
+            document.dispatchEvent(new Event('deepwiki-md:prepare-mermaid-sources'));
             contentContainer.childNodes.forEach((child) => {
               markdown += processNode(child);
             });
@@ -1063,6 +1069,11 @@
 
   // Returns a mermaid code block string, or a placeholder, or empty string if not handled.
   function convertSvgToMarkdown(svgElement) {
+    const originalSource = svgElement.getAttribute('data-deepwiki-mermaid-source');
+    if (originalSource) {
+      return `\n\`\`\`mermaid\n${originalSource.trim()}\n\`\`\`\n`;
+    }
+
     const ariaRole = svgElement.getAttribute('aria-roledescription') || '';
     const svgClass = svgElement.getAttribute('class') || '';
     const isFlowchart = ariaRole.includes('flowchart') || svgClass.includes('flowchart');
@@ -1178,6 +1189,16 @@
     return out;
   }
 
+  function isRelevantSourceFilesDetails(element) {
+    if (!element || element.tagName?.toLowerCase() !== 'details') return false;
+    const summary = Array.from(element.children).find(
+      child => child.tagName?.toLowerCase() === 'summary'
+    );
+    if (!summary) return false;
+    const label = (summary.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    return label === 'relevant source files';
+  }
+
   // Helper function to process a node and return Markdown
   function processNode(element) {
     let markdown = "";
@@ -1210,6 +1231,13 @@
     }
 
     const tagName = element.tagName.toLowerCase();
+
+    // DeepWiki prepends generated provenance metadata as
+    // <details><summary>Relevant source files</summary>...</details>.
+    // It is page-generation context rather than article content, so omit the whole block.
+    if (isRelevantSourceFilesDetails(element)) {
+      return "";
+    }
 
     // Ignore UI buttons and elements that should never produce markdown output.
     // <script> contains Next.js RSC payloads / inline JS; <style> contains CSS;

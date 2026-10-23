@@ -10,6 +10,21 @@ const messageQueue = {};
 
 // Utility functions (sanitizeName and isValidDeepWikiUrl) are now loaded from utils.js
 
+async function injectContentScripts(tabId) {
+  /* page-bridge.js must run in MAIN because the original Mermaid source survives
+  only in DeepWiki's React runtime props. content.js remains isolated so the
+  extension's normal DOM conversion and messaging are not exposed to page code. */
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    files: ['page-bridge.js']
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content.js']
+  });
+}
+
 // Ensure the content script is loaded and responsive in a tab.
 // If not, re-inject it using chrome.scripting.executeScript.
 async function ensureContentScript(tabId) {
@@ -51,10 +66,7 @@ async function ensureContentScript(tabId) {
     chrome.runtime.onMessage.addListener(readyHandler);
   });
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content.js']
-    });
+    await injectContentScripts(tabId);
     await readyPromise;
     markTabReady(tabId);
     flushMessageQueue(tabId);
@@ -840,10 +852,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.tabs.query({ url: ['https://deepwiki.com/*', 'https://app.devin.ai/*'] }, (tabs) => {
     if (chrome.runtime.lastError) return;
     for (const tab of tabs) {
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['content.js']
-      }).catch(() => { /* Tab might not be injectable */ });
+      injectContentScripts(tab.id).catch(() => { /* Tab might not be injectable */ });
     }
   });
 });

@@ -37,6 +37,7 @@ Three message endpoints — popup ↔ background ↔ content script — coordina
 
 - `manifest.json` — MV3, host permissions for `deepwiki.com/*` and `app.devin.ai/*`. Permissions: `downloads`, `tabs`, `webNavigation`, `scripting`.
 - `background.js` (service worker) — batch orchestration, per-tab message queue, SPA navigation, ZIP/file generation. Loads `lib/jszip.min.js` and `utils.js` via `importScripts`.
+- `page-bridge.js` — MAIN-world bridge that reads the original Mermaid source from DeepWiki's React props on `<pre>` and exposes it on the rendered SVG immediately before conversion.
 - `content.js` — DOM → Markdown conversion (`processNode`), sidebar extraction (`extractAllPages`, `getDevinSidebarLinks`). Wrapped in an IIFE with a version guard (`window.__deepwikiVersion`) so re-injection cleanly supersedes the prior instance.
 - `popup.js` / `popup.html` — UI with three buttons + cancel; defers re-injection to background via `ensureContentScript`.
 - `utils.js` — shared `sanitizeName` and `isValidDeepWikiUrl` (loaded by both background and popup).
@@ -51,11 +52,15 @@ Three message endpoints — popup ↔ background ↔ content script — coordina
 
 **Version guard for re-injection.** `content.js` increments `window.__deepwikiVersion` and every message handler short-circuits if `window.__deepwikiVersion !== __v`. This is required because reloading the extension (without refreshing the page) leaves stale event listeners from earlier injections.
 
+**Original Mermaid source bridge.** DeepWiki renders Mermaid into SVG but keeps the exact `language-mermaid` source only in React's MAIN-world props. `page-bridge.js` listens for `deepwiki-md:prepare-mermaid-sources`, reads those props, and copies the source to `data-deepwiki-mermaid-source` on the corresponding SVG. `content.js` dispatches that event synchronously before walking the article and prefers the attached source; SVG reverse conversion remains the fallback. Any manual re-injection path must inject `page-bridge.js` with `world: 'MAIN'` before `content.js`.
+
 **Devin sidebar = real links, matched structurally.** Devin's wiki nav is `li[data-slot="sidebar-menu-item"] > a[href]` pointing at `/org/{org}/wiki/{user}/{project}/page/{chapter}`. `getDevinSidebarLinks` keeps only anchors whose href contains both `/wiki/` and `/page/`; `extractAllPages`'s `filterPrefix` then scopes them to the current project. The `<a>` is an `absolute inset-0` overlay with **no text** — the title comes from `aria-label`. Chapter numbers are **not** derived from indentation; `deriveChapterNumber` reads them straight out of the URL's last path segment (`page/1.1` → `1.1`).
 
 Because these are ordinary links, Devin batches navigate through `navigateToPage` (`chrome.tabs.update`) exactly like DeepWiki — there is no in-page click path. Do **not** reintroduce label deny-list matching over `button[aria-label]`: it silently captured app chrome (`Search`, `Collapse sidebar`, `Help`), and batch mode clicked `Search`, opening Devin's command palette instead of navigating. Regression test: `test/repro_devin_sidebar.js` against `test/fixture_devin_sidebar.html`.
 
 **Content-extraction selectors are site-specific.** DeepWiki uses `.container > div:nth-child(2) .prose`; Devin uses `.prose-main` / `.prose` / `article` / `main`. `convertToMarkdown` retries up to 20× at 500ms intervals if the container has fewer than 50 chars of text — this guards against capturing a half-rendered React tree.
+
+**DeepWiki provenance block is not article content.** Generated pages begin with `<details><summary>Relevant source files</summary>…</details>`, listing the repository files supplied as generation context. `processNode` identifies this block by its direct `summary` label and omits the entire `details` element. Do not filter arbitrary first-page lists or all `<details>` blocks; ordinary disclosure content must remain exportable.
 
 **URL gate (`utils.js:isValidDeepWikiUrl`).** Hostname must be exactly `deepwiki.com`, `*.deepwiki.com`, or `app.devin.ai` (no substring matching — `evil-deepwiki.com` is rejected) **and** the path must have ≥2 segments. `file://` and `localhost`/`127.0.0.1` are accepted only when the URL contains `test-page.html` or `test/`. Mirror this any time you add a new permitted origin: update both `manifest.json` (`host_permissions` + `content_scripts.matches`) and `isValidDeepWikiUrl`.
 
